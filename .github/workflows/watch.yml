@@ -24,22 +24,26 @@ jobs:
       - name: Interroger les services
         id: check
         run: |
-          # url|codes acceptés (motif grep -E). Codes constatés en production le 2026-07-27.
+          # url;codes acceptés (motif grep -E). Codes constatés en production le 2026-07-27.
+          # Séparateur ';' et NON '|' : ce dernier est l'opérateur d'alternance des
+          # expressions régulières, donc "${cible##*|}" coupait au milieu du motif
+          # ^(200|302)$ et n'en gardait que "302)$" — un motif invalide qui ne
+          # correspondait à rien. Toute cible à alternance était déclarée en panne.
           CIBLES=(
-            "https://operwa.com|^2[0-9][0-9]$"
-            "https://demo.operwa.com/health|^200$"
-            "https://gbox-int.net|^2[0-9][0-9]$"
-            "https://admin.gbox-int.net/api/v1/health/|^200$"
-            "https://ukulimap.com|^2[0-9][0-9]$"
-            "https://app.ukulimap.com|^2[0-9][0-9]$"
-            "https://api.ukulimap.com/api/v1/health/|^200$"
-            "https://status.ukulimap.com|^(200|302)$"
+            "https://operwa.com;^2[0-9][0-9]$"
+            "https://demo.operwa.com/health;^200$"
+            "https://gbox-int.net;^2[0-9][0-9]$"
+            "https://admin.gbox-int.net/api/v1/health/;^200$"
+            "https://ukulimap.com;^2[0-9][0-9]$"
+            "https://app.ukulimap.com;^2[0-9][0-9]$"
+            "https://api.ukulimap.com/api/v1/health/;^200$"
+            "https://status.ukulimap.com;^(200|302)$"
           )
 
           echecs=""
           for cible in "${CIBLES[@]}"; do
-            url="${cible%%|*}"
-            attendu="${cible##*|}"
+            url="${cible%%;*}"
+            attendu="${cible##*;}"
 
             # Deux essais espacés : une sonde qui alerte au premier hoquet réseau
             # devient du bruit, et on finit par ignorer ses messages.

@@ -1,0 +1,91 @@
+name: Surveillance externe des SaaS
+
+# Sonde les services depuis l'infrastructure GitHub, donc DEPUIS L'EXTÉRIEUR du
+# VPS. C'est le seul dispositif qui alerte encore quand le serveur lui-même est
+# mort : Uptime Kuma tourne sur le VPS surveillé et disparaît avec lui.
+#
+# Secrets requis (Settings → Secrets and variables → Actions) :
+#   TELEGRAM_BOT_TOKEN = jeton donné par @BotFather
+#   TELEGRAM_CHAT_ID   = identifiant de la conversation à notifier
+#
+# ⚠️ Dépôt PUBLIC volontairement : sur un dépôt privé, chaque exécution est
+# facturée au minimum 1 minute du quota gratuit (2000/mois), soit ~4320 min/mois
+# à cette fréquence — le quota serait épuisé et les déploiements des trois SaaS
+# s'arrêteraient avec lui. Sur un dépôt public, les minutes sont illimitées.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sonde:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Interroger les services
+        id: check
+        run: |
+          # url|codes acceptés (motif grep -E). Codes constatés en production le 2026-07-27.
+          CIBLES=(
+            "https://operwa.com|^2[0-9][0-9]$"
+            "https://demo.operwa.com/health|^200$"
+            "https://gbox-int.net|^2[0-9][0-9]$"
+            "https://admin.gbox-int.net/api/v1/health/|^200$"
+            "https://ukulimap.com|^2[0-9][0-9]$"
+            "https://app.ukulimap.com|^2[0-9][0-9]$"
+            "https://api.ukulimap.com/api/v1/health/|^200$"
+            "https://status.ukulimap.com|^(200|302)$"
+          )
+
+          echecs=""
+          for cible in "${CIBLES[@]}"; do
+            url="${cible%%|*}"
+            attendu="${cible##*|}"
+
+            # Deux essais espacés : une sonde qui alerte au premier hoquet réseau
+            # devient du bruit, et on finit par ignorer ses messages.
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 "$url" || echo "000")
+            if ! echo "$code" | grep -qE "$attendu"; then
+              sleep 20
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 "$url" || echo "000")
+            fi
+
+            if echo "$code" | grep -qE "$attendu"; then
+              echo "OK   $url ($code)"
+            else
+              echo "HS   $url ($code, attendu $attendu)"
+              echecs="${echecs}• ${url} → ${code}"$'\n'
+            fi
+          done
+
+          if [ -n "$echecs" ]; then
+            {
+              echo "echecs<<FIN"
+              echo "$echecs"
+              echo "FIN"
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Alerter sur Telegram
+        if: failure()
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ECHECS: ${{ steps.check.outputs.echecs }}
+        run: |
+          # Si l'étape précédente est tombée sans produire de liste (panne du
+          # runner, réseau GitHub), on prévient quand même : un silence ne doit
+          # jamais passer pour un « tout va bien ».
+          CORPS="${ECHECS:-(échec de la sonde elle-même, cause inconnue)}"
+          MESSAGE="🔴 SaaS injoignables
+
+          ${CORPS}
+          Sonde externe GitHub Actions — $(date -u '+%F %T UTC')
+          Détail : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          curl -s --max-time 30 \
+            -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT}" \
+            --data-urlencode "text=${MESSAGE}" \
+            -o /dev/null -w "Telegram: HTTP %{http_code}\n"

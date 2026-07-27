@@ -1,7 +1,7 @@
 # vps-watch — surveillance externe des SaaS
 
 Sonde les services hébergés sur le VPS mutualisé **depuis l'infrastructure
-GitHub**, et alerte sur Telegram en cas d'indisponibilité.
+GitHub**, et alerte sur Slack en cas d'indisponibilité.
 
 ## Pourquoi ce dépôt existe
 
@@ -36,8 +36,10 @@ Settings → Secrets and variables → Actions :
 
 | Secret | Où l'obtenir |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | `/newbot` auprès de [@BotFather](https://t.me/BotFather) |
-| `TELEGRAM_CHAT_ID` | écrire un message au bot, puis lire `https://api.telegram.org/bot<TOKEN>/getUpdates` |
+| `SLACK_WEBHOOK_URL` | [api.slack.com/apps](https://api.slack.com/apps) → *Create New App* (from scratch) → **Incoming Webhooks** → activer → *Add New Webhook to Workspace* → choisir le canal |
+
+Cette URL **est** le secret : quiconque la détient peut publier dans le canal.
+Elle n'a pas d'expiration ; en cas de fuite, la révoquer depuis la même page.
 
 Tester sans attendre le planificateur : onglet **Actions** → *Surveillance
 externe des SaaS* → **Run workflow**.

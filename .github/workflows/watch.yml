@@ -4,9 +4,8 @@ name: Surveillance externe des SaaS
 # VPS. C'est le seul dispositif qui alerte encore quand le serveur lui-même est
 # mort : Uptime Kuma tourne sur le VPS surveillé et disparaît avec lui.
 #
-# Secrets requis (Settings → Secrets and variables → Actions) :
-#   TELEGRAM_BOT_TOKEN = jeton donné par @BotFather
-#   TELEGRAM_CHAT_ID   = identifiant de la conversation à notifier
+# Secret requis (Settings → Secrets and variables → Actions) :
+#   SLACK_WEBHOOK_URL = webhook entrant Slack (https://hooks.slack.com/services/…)
 #
 # ⚠️ Dépôt PUBLIC volontairement : sur un dépôt privé, chaque exécution est
 # facturée au minimum 1 minute du quota gratuit (2000/mois), soit ~4320 min/mois
@@ -67,25 +66,37 @@ jobs:
             exit 1
           fi
 
-      - name: Alerter sur Telegram
+      - name: Alerter sur Slack
         if: failure()
         env:
-          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
           ECHECS: ${{ steps.check.outputs.echecs }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           # Si l'étape précédente est tombée sans produire de liste (panne du
           # runner, réseau GitHub), on prévient quand même : un silence ne doit
           # jamais passer pour un « tout va bien ».
           CORPS="${ECHECS:-(échec de la sonde elle-même, cause inconnue)}"
-          MESSAGE="🔴 SaaS injoignables
 
-          ${CORPS}
-          Sonde externe GitHub Actions — $(date -u '+%F %T UTC')
-          Détail : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # jq construit le JSON : un message contenant un guillemet ou un saut de
+          # ligne casserait un payload assemblé à la main, et Slack rejetterait
+          # l'appel au pire moment — pendant une panne.
+          jq -n \
+            --arg corps "$CORPS" \
+            --arg horo "$(date -u '+%F %T UTC')" \
+            --arg url "$RUN_URL" \
+            '{
+              text: "🔴 SaaS injoignables",
+              blocks: [
+                {type: "header", text: {type: "plain_text", text: "🔴 SaaS injoignables", emoji: true}},
+                {type: "section", text: {type: "mrkdwn", text: $corps}},
+                {type: "context", elements: [
+                  {type: "mrkdwn", text: ("Sonde externe GitHub Actions — " + $horo + " — <" + $url + "|voir l’exécution>")}
+                ]}
+              ]
+            }' > payload.json
 
           curl -s --max-time 30 \
-            -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${CHAT}" \
-            --data-urlencode "text=${MESSAGE}" \
-            -o /dev/null -w "Telegram: HTTP %{http_code}\n"
+            -X POST -H 'Content-Type: application/json' \
+            --data @payload.json "$WEBHOOK" \
+            -o /dev/null -w "Slack: HTTP %{http_code}\n"
